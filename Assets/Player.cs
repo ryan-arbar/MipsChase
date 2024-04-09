@@ -5,7 +5,7 @@ using UnityEngine;
 public class Player : MonoBehaviour
 {
     // External tunables.
-    static public float m_fMaxSpeed = 0.10f;
+    static public float m_fMaxSpeed = 0.20f;
     public float m_fSlowSpeed = m_fMaxSpeed * 0.66f;
     public float m_fIncSpeed = 0.0025f;
     public float m_fMagnitudeFast = 0.6f;
@@ -25,6 +25,7 @@ public class Player : MonoBehaviour
     public float m_fTargetAngle;
     public eState m_nState;
     public float m_fDiveStartTime;
+
 
     public enum eState : int
     {
@@ -73,10 +74,10 @@ public class Player : MonoBehaviour
 
     void UpdateDirectionAndSpeed()
     {
-        // Get relative positions between the mouse and player
+        // Convert mouse position from screen space to world space
         Vector3 vScreenPos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
         Vector2 vScreenSize = Camera.main.ScreenToWorldPoint(new Vector2(Screen.width, Screen.height));
-        Vector2 vOffset = new Vector2(transform.position.x - vScreenPos.x, transform.position.y - vScreenPos.y);
+        Vector2 vOffset = new Vector2(vScreenPos.x - transform.position.x, vScreenPos.y - transform.position.y);
 
         // Find the target angle being requested.
         m_fTargetAngle = Mathf.Atan2(vOffset.y, vOffset.x) * Mathf.Rad2Deg;
@@ -99,8 +100,103 @@ public class Player : MonoBehaviour
         }
     }
 
+
     void FixedUpdate()
     {
         GetComponent<Renderer>().material.color = stateColors[(int)m_nState];
+
+        CheckForDive();
+
+        // Right mouse button used to speed up
+        if (Input.GetMouseButton(1))
+        {
+            m_fSpeed += m_fIncSpeed;
+        }
+        else
+        {
+            m_fSpeed -= m_fIncSpeed;
+        }
+
+        // Clamp the speed within 0 and max speed range
+        m_fSpeed = Mathf.Clamp(m_fSpeed, 0, m_fMaxSpeed);
+
+        UpdateDirectionAndSpeed();
+
+        // Determine the current movement state based on the speed
+        if (m_fSpeed > m_fSlowSpeed && m_fSpeed <= m_fMaxSpeed && m_nState != eState.kDiving && m_nState != eState.kRecovering)
+        {
+            m_nState = eState.kMoveFast;
+        }
+        else if (m_fSpeed <= m_fSlowSpeed && m_nState != eState.kDiving && m_nState != eState.kRecovering)
+        {
+            m_nState = eState.kMoveSlow;
+        }
+
+        // Switch cases for player states
+        switch (m_nState)
+        {
+            case eState.kMoveSlow:
+            case eState.kMoveFast:
+                MoveAndRotate();
+                break;
+            case eState.kDiving:
+                HandleDive();
+                break;
+            case eState.kRecovering:
+                HandleRecovery();
+                break;
+        }
+    }
+
+
+
+    void MoveAndRotate()
+    {
+        // Interpolate towards the target speed and angle
+        m_fSpeed = Mathf.Lerp(m_fSpeed, m_fTargetSpeed, m_fIncSpeed);
+        float angleDifference = Mathf.DeltaAngle(m_fAngle, m_fTargetAngle);
+
+        if (m_nState == eState.kMoveFast && Mathf.Abs(angleDifference) > m_fFastRotateMax)
+        {
+            // Reduce speed when turning quickly
+            m_fSpeed -= m_fIncSpeed * 5;
+            if (m_fSpeed < m_fSlowSpeed)
+            {
+                m_nState = eState.kMoveSlow; // Transition back to slow movement
+            }
+        }
+        else
+        {
+            // Rotate towards the target angle
+            m_fAngle = Mathf.LerpAngle(m_fAngle, m_fTargetAngle, m_fFastRotateSpeed);
+        }
+
+        // Update player position and rotation
+        Vector3 direction = Quaternion.Euler(0, 0, m_fAngle) * Vector3.right;
+        transform.position += direction * m_fSpeed;
+        transform.rotation = Quaternion.Euler(0, 0, m_fAngle - 180);
+    }
+
+    void HandleDive()
+    {
+        if (Time.time - m_fDiveStartTime < m_fDiveTime)
+        {
+            transform.position = Vector3.Lerp(m_vDiveStartPos, m_vDiveEndPos, (Time.time - m_fDiveStartTime) / m_fDiveTime);
+        }
+        else
+        {
+            // Enter recovery state
+            m_nState = eState.kRecovering;
+            m_fDiveStartTime = Time.time; // Reset timer for recovery
+        }
+    }
+
+    void HandleRecovery()
+    {
+        if (Time.time - m_fDiveStartTime > m_fDiveRecoveryTime)
+        {
+            // Return to slow movement state
+            m_nState = eState.kMoveSlow;
+        }
     }
 }
